@@ -29,11 +29,15 @@ function Reset-Directory([string]$Path) {
 function Build-NativeArchitecture([string]$Name, [string]$Platform) {
 	$BuildDirectory = Join-Path $BuildRoot "native-$Name"
 	Write-Host "Configuring native $Name components..."
-	& cmake -S $NativeSource -B $BuildDirectory -A $Platform
-	if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed for $Name." }
+	$ConfigureOutput = & cmake -S $NativeSource -B $BuildDirectory -A $Platform 2>&1
+	$ConfigureExitCode = $LASTEXITCODE
+	$ConfigureOutput | ForEach-Object { Write-Host $_ }
+	if ($ConfigureExitCode -ne 0) { throw "CMake configuration failed for $Name." }
 	Write-Host "Building native $Name components..."
-	& cmake --build $BuildDirectory --config Release --parallel
-	if ($LASTEXITCODE -ne 0) { throw "Native build failed for $Name." }
+	$BuildOutput = & cmake --build $BuildDirectory --config Release --parallel 2>&1
+	$BuildExitCode = $LASTEXITCODE
+	$BuildOutput | ForEach-Object { Write-Host $_ }
+	if ($BuildExitCode -ne 0) { throw "Native build failed for $Name." }
 	return (Join-Path $BuildDirectory "bin")
 }
 
