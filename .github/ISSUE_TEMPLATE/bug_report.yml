@@ -1,0 +1,40 @@
+name: Bug report
+description: Report a DictationBridge Lite problem or application compatibility result.
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Do not include private dictated text, passwords, microphone recordings, or unrelated NVDA log contents.
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 10 22H2 or Windows 11 24H2
+    validations:
+      required: true
+  - type: input
+    id: nvda
+    attributes:
+      label: NVDA version
+    validations:
+      required: true
+  - type: input
+    id: application
+    attributes:
+      label: Application and version
+      placeholder: Notepad, Microsoft Word, Firefox, and so on
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps and result
+      description: Explain what Windows inserted and what NVDA spoke.
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Relevant NVDA log lines
+      description: Include only relevant lines beginning with DictationBridge Lite.

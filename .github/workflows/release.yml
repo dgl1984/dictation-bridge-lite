@@ -1,0 +1,55 @@
+name: Publish tagged release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-2022
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7.0.1
+
+      - name: Validate tag and Python syntax
+        shell: pwsh
+        run: |
+          $manifest = Get-Content addon/manifest.ini -Raw
+          $match = [regex]::Match($manifest, '(?m)^version\s*=\s*"([^"]+)"\s*$')
+          if (-not $match.Success) { throw "Unable to read manifest version." }
+          $tagPattern = "^v$([regex]::Escape($match.Groups[1].Value))(?:-.+)?$"
+          if ("${{ github.ref_name }}" -notmatch $tagPattern) {
+            throw "Tag ${{ github.ref_name }} does not match manifest version $($match.Groups[1].Value)."
+          }
+          python -m compileall -q addon
+
+      - name: Build Win32 and x64 add-on
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Record SHA-256 in workflow summary
+        shell: pwsh
+        run: |
+          $addon = Get-Item output/*.nvda-addon
+          $hash = (Get-FileHash -Algorithm SHA256 $addon.FullName).Hash.ToLowerInvariant()
+          "### Release artifact" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          "- ``$($addon.Name)``" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+          "- SHA-256: ``$hash``" | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY
+
+      - name: Publish GitHub release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $addon = Get-Item output/*.nvda-addon
+          $arguments = @(
+            "release", "create", "${{ github.ref_name }}",
+            $addon.FullName,
+            "--verify-tag", "--generate-notes", "--title", "DictationBridge Lite ${{ github.ref_name }}"
+          )
+          if ("${{ github.ref_name }}" -match "-") { $arguments += "--prerelease" }
+          & gh @arguments
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release creation failed." }

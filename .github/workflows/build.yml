@@ -1,0 +1,36 @@
+name: Build add-on
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2022
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7.0.1
+
+      - name: Validate Python syntax
+        shell: pwsh
+        run: python -m compileall -q addon
+
+      - name: Build Win32 and x64 add-on
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Display SHA-256
+        shell: pwsh
+        run: Get-FileHash -Algorithm SHA256 output/*.nvda-addon | Format-List
+
+      - name: Upload add-on artifact
+        uses: actions/upload-artifact@v4.6.2
+        with:
+          name: DictationBridgeLite
+          path: output/*.nvda-addon
+          if-no-files-found: error

@@ -1,0 +1,7 @@
+/build/
+/output/
+/*.nvda-addon
+__pycache__/
+*.py[cod]
+*.pdb
+*.ilk

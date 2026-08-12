@@ -1,0 +1,6 @@
+; Copyright (C) 2026 Derek Lane and DictationBridge Lite contributors
+; SPDX-License-Identifier: MPL-2.0
+EXPORTS
+	Attach
+	InstallHooks
+	RemoveHooks
