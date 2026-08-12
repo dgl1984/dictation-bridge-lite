@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import subprocess
 import time
 from ctypes import wintypes
 
@@ -21,6 +22,7 @@ import api
 import braille
 import controlTypes
 import eventHandler
+import gui
 import inputCore
 import queueHandler
 import speech
@@ -41,9 +43,18 @@ ECHO_DELAY_MS = 100
 PHYSICAL_KEY_GRACE_SECONDS = 0.35
 NATIVE_TYPED_DEDUP_SECONDS = 1.0
 FALLBACK_DEDUP_SECONDS = 1.0
+ONLINE_COMPOSITION_GRACE_SECONDS = 4.0
+ONLINE_SPEECH_DEDUP_SECONDS = 2.0
 WSR_EVENT_REQUEST_RETRY_SECONDS = 1.0
 WSR_PANEL_DEDUP_SECONDS = 0.5
+WSR_PANEL_REFRESH_DELAY_MS = 250
 MAX_TEXT_SNAPSHOTS = 32
+ONLINE_SPEECH_SETTINGS_URI = "ms-settings:privacy-speech"
+OFFLINE_SPEECH_CONTROL_COMMAND = (
+	"control",
+	"/name",
+	"Microsoft.SpeechRecognition",
+)
 
 TextCallbackType = ctypes.WINFUNCTYPE(
 	None,
@@ -89,16 +100,30 @@ class GlobalPlugin(BaseGlobalPlugin):
 		self._lastWSRPanelTime = 0.0
 		self._lastWSRSelectionKey = None
 		self._lastWSRSelectionTime = 0.0
+		self._wsrPanelObject = None
+		self._lastWSRFeedback = ""
+		self._lastOnlineCompositionTime = 0.0
+		self._onlineSpeechDedupUntil = 0.0
+		self._recentOnlineSpeech = {}
 		self._rawKeyHandlerRegistered = False
+		self._speechFilter = None
+		self._speechFilterRegistered = False
+		self._toolsSubmenu = None
+		self._toolsMenuEntry = None
+		self._onlineSettingsMenuItem = None
+		self._offlineSettingsMenuItem = None
+		self._echoMenuItem = None
 		self._native = None
 		self._nativeActive = False
 		self._textInsertedCallback = TextCallbackType(self._nativeTextInserted)
 		self._textDeletedCallback = TextCallbackType(self._nativeTextDeleted)
 		self._debugCallback = DebugCallbackType(self._nativeDebugLog)
 		self._registerRawKeyObserver()
+		self._registerSpeechFilter()
 		self._startNativeBackend()
 		self._snapshotObject(api.getFocusObject())
 		self._requestWSRPanelEvents()
+		self._createToolsMenu()
 
 	def _registerRawKeyObserver(self):
 		observer = getattr(inputCore, "decide_handleRawKey", None)
@@ -115,6 +140,129 @@ class GlobalPlugin(BaseGlobalPlugin):
 		if pressed:
 			self._lastPhysicalKeyTime = time.monotonic()
 		return True
+
+	def _registerSpeechFilter(self):
+		"""Suppress only exact, rapid repeats of a finalized online phrase."""
+		try:
+			observer = getattr(speech, "filter_speechSequence", None)
+			if observer is None:
+				return
+			observer.register(self._filterOnlineDuplicateSpeech)
+			self._speechFilter = observer
+			self._speechFilterRegistered = True
+		except Exception:
+			log.exception("DictationBridge Lite: unable to register online speech filter")
+
+	def _filterOnlineDuplicateSpeech(self, speechSequence):
+		now = time.monotonic()
+		if now > self._onlineSpeechDedupUntil:
+			self._recentOnlineSpeech.clear()
+			return speechSequence
+		text = " ".join(item for item in speechSequence if isinstance(item, str)).strip()
+		if not text:
+			return speechSequence
+		lastTime = self._recentOnlineSpeech.get(text)
+		self._recentOnlineSpeech[text] = now
+		if lastTime is not None and now - lastTime <= ONLINE_SPEECH_DEDUP_SECONDS:
+			return []
+		return speechSequence
+
+	def _createToolsMenu(self):
+		"""Add discoverable Windows dictation controls to NVDA's Tools menu."""
+		try:
+			trayIcon = gui.mainFrame.sysTrayIcon
+			self._toolsSubmenu = wx.Menu()
+			self._onlineSettingsMenuItem = self._toolsSubmenu.Append(
+				wx.ID_ANY,
+				_("&Online dictation settings..."),
+				_("Open Windows online speech-recognition privacy settings."),
+			)
+			self._offlineSettingsMenuItem = self._toolsSubmenu.Append(
+				wx.ID_ANY,
+				_("O&ffline Speech Recognition settings..."),
+				_("Open the legacy Windows Speech Recognition Control Panel."),
+			)
+			self._toolsSubmenu.AppendSeparator()
+			self._echoMenuItem = self._toolsSubmenu.Append(
+				wx.ID_ANY,
+				_("&Speak dictated text"),
+				_("Enable or disable DictationBridge Lite announcements."),
+				kind=wx.ITEM_CHECK,
+			)
+			self._echoMenuItem.Check(self._enabled)
+			self._toolsMenuEntry = trayIcon.toolsMenu.AppendSubMenu(
+				self._toolsSubmenu,
+				_("DictationBridge &Lite"),
+				_("Open Windows dictation settings or control dictated-text announcements."),
+			)
+			trayIcon.Bind(wx.EVT_MENU, self._onOpenOnlineSettings, self._onlineSettingsMenuItem)
+			trayIcon.Bind(wx.EVT_MENU, self._onOpenOfflineSettings, self._offlineSettingsMenuItem)
+			trayIcon.Bind(wx.EVT_MENU, self._onToggleEchoMenu, self._echoMenuItem)
+		except Exception:
+			log.exception("DictationBridge Lite: unable to create NVDA Tools menu")
+			self._removeToolsMenu()
+
+	def _removeToolsMenu(self):
+		"""Remove menu objects during add-on reload or NVDA shutdown."""
+		try:
+			trayIcon = gui.mainFrame.sysTrayIcon
+			for item, handler in (
+				(self._onlineSettingsMenuItem, self._onOpenOnlineSettings),
+				(self._offlineSettingsMenuItem, self._onOpenOfflineSettings),
+				(self._echoMenuItem, self._onToggleEchoMenu),
+			):
+				if item is not None:
+					trayIcon.Unbind(wx.EVT_MENU, handler=handler, source=item)
+			if self._toolsMenuEntry is not None:
+				trayIcon.toolsMenu.Remove(self._toolsMenuEntry.Id)
+				self._toolsMenuEntry.Destroy()
+			if self._toolsSubmenu is not None:
+				self._toolsSubmenu.Destroy()
+		except Exception:
+			log.debug("DictationBridge Lite: unable to remove NVDA Tools menu cleanly", exc_info=True)
+		finally:
+			self._toolsSubmenu = None
+			self._toolsMenuEntry = None
+			self._onlineSettingsMenuItem = None
+			self._offlineSettingsMenuItem = None
+			self._echoMenuItem = None
+
+	def _onOpenOnlineSettings(self, event):
+		if event is not None:
+			event.Skip()
+		try:
+			os.startfile(ONLINE_SPEECH_SETTINGS_URI)
+		except OSError:
+			log.exception("DictationBridge Lite: unable to open online dictation settings")
+			ui.message(_("Windows online dictation settings could not be opened"))
+
+	def _onOpenOfflineSettings(self, event):
+		if event is not None:
+			event.Skip()
+		try:
+			subprocess.Popen(OFFLINE_SPEECH_CONTROL_COMMAND)
+		except OSError:
+			log.exception("DictationBridge Lite: unable to open offline Speech Recognition settings")
+			ui.message(_("Windows offline Speech Recognition settings could not be opened"))
+
+	def _setEchoEnabled(self, enabled):
+		self._enabled = bool(enabled)
+		if not self._enabled:
+			self._cancelFlushTimer()
+			self._pendingStart = None
+			self._pendingText = ""
+			self._nativeDedupText = ""
+			self._nativeDeletedDedupText = ""
+			self._fallbackDedupText = ""
+			self._fallbackDeletedDedupText = ""
+		if self._echoMenuItem is not None:
+			self._echoMenuItem.Check(self._enabled)
+
+	def _onToggleEchoMenu(self, event):
+		if event is not None:
+			event.Skip()
+		self._setEchoEnabled(not self._enabled)
+		ui.message(_("DictationBridge Lite echo on") if self._enabled else _("DictationBridge Lite echo off"))
 
 	def _startNativeBackend(self):
 		architecture = ctypes.sizeof(ctypes.c_void_p) * 8
@@ -238,7 +386,6 @@ class GlobalPlugin(BaseGlobalPlugin):
 		self._pendingText = ""
 		if not self._enabled or not text:
 			return
-
 		text = text.replace("\r\n", "\n").replace("\r", "\n")
 		while "\n" in text:
 			line, separator, remainder = text.partition("\n")
@@ -363,11 +510,29 @@ class GlobalPlugin(BaseGlobalPlugin):
 			return None
 		windowHandle = int(getattr(obj, "windowHandle", 0) or 0)
 		if windowHandle:
-			return (
+			key = (
 				windowHandle,
 				int(getattr(obj, "event_childID", 0) or 0),
 			)
+			# Windows online dictation exposes an interim object named
+			# "Composition" with the same HWND and child ID as the real editor.
+			# Keep its snapshot separate so it cannot replace the document state.
+			if GlobalPlugin._isOnlineCompositionObject(obj):
+				return key + ("onlineComposition",)
+			return key
 		return id(obj)
+
+	@staticmethod
+	def _isOnlineCompositionObject(obj):
+		return (getattr(obj, "name", "") or "").casefold() == "composition"
+
+	def _isRecentOnlineComposition(self):
+		lastTime = getattr(self, "_lastOnlineCompositionTime", 0.0)
+		return (
+			lastTime != 0.0
+			and time.monotonic() - lastTime
+			<= ONLINE_COMPOSITION_GRACE_SECONDS
+		)
 
 	def _getEditableText(self, obj):
 		if obj is None:
@@ -424,11 +589,22 @@ class GlobalPlugin(BaseGlobalPlugin):
 		return prefix, oldText[prefix:oldEnd], newText[prefix:newEnd]
 
 	def event_gainFocus(self, obj, nextHandler):
+		if self._isOnlineCompositionObject(obj):
+			self._lastOnlineCompositionTime = time.monotonic()
+		elif self._isRecentOnlineComposition() and (
+			(getattr(obj, "name", "") or "").casefold() == "text editor"
+		):
+			# NVDA reads the finalized online phrase when focus returns from the
+			# composition object. Limit duplicate filtering to this short window.
+			self._onlineSpeechDedupUntil = (
+				time.monotonic() + ONLINE_SPEECH_DEDUP_SECONDS
+			)
+			self._recentOnlineSpeech.clear()
 		nextHandler()
 		self._snapshotObject(obj)
 		self._requestWSRPanelEvents()
 
-	def event_valueChange(self, obj, nextHandler):
+	def _handleEditableChange(self, obj, nextHandler, source):
 		try:
 			key = self._objectKey(obj)
 			oldText = self._textSnapshots.get(key)
@@ -439,6 +615,15 @@ class GlobalPlugin(BaseGlobalPlugin):
 			if len(self._textSnapshots) > MAX_TEXT_SNAPSHOTS:
 				self._textSnapshots.pop(next(iter(self._textSnapshots)))
 			self._requestWSRPanelEvents()
+			if self._isOnlineCompositionObject(obj):
+				self._lastOnlineCompositionTime = time.monotonic()
+				return
+			if self._isRecentOnlineComposition() and (
+				(getattr(obj, "name", "") or "").casefold() == "text editor"
+			):
+				# The completed phrase is already announced by NVDA when focus
+				# returns to the editor. Do not also echo partial commit writes.
+				return
 			if (
 				not self._enabled
 				or self._wsrRequestedPid is None
@@ -459,15 +644,67 @@ class GlobalPlugin(BaseGlobalPlugin):
 				self._rememberFallbackInsertion(insertedText)
 				self._enqueueInsertion(start, insertedText)
 		except Exception:
-			log.exception("DictationBridge Lite: value-change fallback failed")
+			log.exception("DictationBridge Lite: %s fallback failed", source)
 		finally:
 			nextHandler()
+
+	def event_valueChange(self, obj, nextHandler):
+		if self._handleWSRFeedback(obj):
+			nextHandler()
+			return
+		self._handleEditableChange(obj, nextHandler, "valueChange")
 
 	def event_textChange(self, obj, nextHandler):
 		# UIA edit controls can report the same kind of document update as a
 		# text-change event rather than the MSAA value-change event used by
 		# classic Notepad. The shared snapshot makes receiving both harmless.
-		self.event_valueChange(obj, nextHandler)
+		self._handleEditableChange(obj, nextHandler, "textChange")
+
+	def event_nameChange(self, obj, nextHandler):
+		appModule = getattr(obj, "appModule", None)
+		appName = (getattr(appModule, "appName", "") or "").casefold()
+		if appName == "textinputhost":
+			automationId = getattr(obj, "UIAAutomationId", None)
+			name = (getattr(obj, "name", "") or "").strip().casefold()
+			if automationId == "DictationHintControl":
+				# Rotating tips interrupt every dictated phrase without adding
+				# useful information for an experienced dictation user.
+				return
+			if automationId == "DictationStateErrorControl" and name in {
+				"",
+				"listening...",
+				"thinking...",
+			}:
+				# Preserve genuine error text while silencing routine state churn.
+				return
+		nextHandler()
+
+	def _handleWSRFeedback(self, obj):
+		"""Announce actionable legacy WSR status and refresh reused panels."""
+		if self._wsrRequestedPid is None:
+			return False
+		if int(getattr(obj, "processID", 0) or 0) != self._wsrRequestedPid:
+			return False
+		if getattr(obj, "windowClassName", "") != "MS:SpeechTopLevel":
+			return False
+		if (getattr(obj, "name", "") or "").casefold() != "speech recognition feedback":
+			return False
+		value = (getattr(obj, "value", "") or "").strip()
+		if not value or value == self._lastWSRFeedback:
+			return True
+		self._lastWSRFeedback = value
+		if value.casefold().startswith("correcting"):
+			if self._wsrPanelObject is not None:
+				wx.CallLater(
+					WSR_PANEL_REFRESH_DELAY_MS,
+					self._announceWSRPanel,
+					self._wsrPanelObject,
+					True,
+				)
+			return True
+		if value.casefold() not in {"listening", "off", "sleeping"}:
+			self._speakEcho(value)
+		return True
 
 	def _requestWSRPanelEvents(self):
 		now = time.monotonic()
@@ -511,12 +748,22 @@ class GlobalPlugin(BaseGlobalPlugin):
 	def _findWSRPanel(obj):
 		current = obj
 		for _ in range(12):
-			if isinstance(current, (WSRAlternatesPanel, WSRSpellingPanel)):
+			if GlobalPlugin._isWSRPanel(current):
 				return current
 			current = getattr(current, "parent", None)
 			if current is None:
 				break
 		return None
+
+	@staticmethod
+	def _isWSRPanel(obj):
+		"""Recognize a WSR panel even if its overlay was applied too late."""
+		if isinstance(obj, (WSRAlternatesPanel, WSRSpellingPanel)):
+			return True
+		if getattr(obj, "windowClassName", "") != "#32770":
+			return False
+		name = (getattr(obj, "name", "") or "").casefold()
+		return "alternates panel" in name or "spelling panel" in name
 
 	@staticmethod
 	def _cleanWSRItemName(name):
@@ -555,20 +802,43 @@ class GlobalPlugin(BaseGlobalPlugin):
 			elif role == controlTypes.Role.LISTITEM and name:
 				cleaned = self._cleanWSRItemName(name)
 				parts.append(f"{self._positionPrefix(descendant)}{cleaned}".strip())
+		# On some systems the show event arrives before the child controls exist.
+		# The dialog description still contains the operating instructions, so use
+		# it as a fallback rather than announcing only "Alternates panel".
+		if len(parts) == 1:
+			description = (getattr(panel, "description", "") or "").strip()
+			if description:
+				parts.extend(line.strip() for line in description.splitlines() if line.strip())
 		return ". ".join(part for part in parts if part)
 
-	def _announceWSRPanel(self, panel):
+	def _scheduleWSRPanelAnnouncement(self, panel, force=False):
+		"""Wait until Windows has populated a newly shown or reused panel."""
+		wx.CallLater(
+			WSR_PANEL_REFRESH_DELAY_MS,
+			self._announceWSRPanel,
+			panel,
+			force,
+		)
+
+	def _announceWSRPanel(self, panel, force=False):
 		if not self._enabled:
 			return
 		key = self._objectKey(panel)
 		now = time.monotonic()
-		if key == self._lastWSRPanelKey and now - self._lastWSRPanelTime < WSR_PANEL_DEDUP_SECONDS:
+		if (
+			not force
+			and key == self._lastWSRPanelKey
+			and now - self._lastWSRPanelTime < WSR_PANEL_DEDUP_SECONDS
+		):
 			return
 		self._lastWSRPanelKey = key
 		self._lastWSRPanelTime = now
 		announcement = self._panelAnnouncement(panel)
 		if announcement:
 			self._speakEcho(announcement)
+			log.info("DictationBridge Lite: announced legacy WSR correction panel")
+		else:
+			log.warning("DictationBridge Lite: WSR correction panel had no readable content")
 
 	def _announceWSRSelection(self, obj):
 		if not self._enabled:
@@ -588,8 +858,14 @@ class GlobalPlugin(BaseGlobalPlugin):
 		self._speakEcho(f"{self._positionPrefix(obj)}{name}".strip())
 
 	def event_show(self, obj, nextHandler):
-		if isinstance(obj, (WSRAlternatesPanel, WSRSpellingPanel)):
-			self._announceWSRPanel(obj)
+		if self._isWSRPanel(obj):
+			self._wsrPanelObject = obj
+			# Let NVDA and other add-ons finish processing the dialog before we
+			# inspect its descendants. Consuming this event left some WSR focus
+			# objects incompletely initialized for keyboard add-ons.
+			nextHandler()
+			self._scheduleWSRPanelAnnouncement(obj)
+			log.info("DictationBridge Lite: legacy WSR correction panel shown; announcement scheduled")
 			return
 		nextHandler()
 
@@ -598,6 +874,7 @@ class GlobalPlugin(BaseGlobalPlugin):
 			getattr(obj, "role", None) == controlTypes.Role.LISTITEM
 			and self._findWSRPanel(obj) is not None
 		):
+			nextHandler()
 			self._announceWSRSelection(obj)
 			return
 		nextHandler()
@@ -609,6 +886,7 @@ class GlobalPlugin(BaseGlobalPlugin):
 			and controlTypes.State.SELECTED in states
 			and self._findWSRPanel(obj) is not None
 		):
+			nextHandler()
 			self._announceWSRSelection(obj)
 			return
 		nextHandler()
@@ -637,19 +915,19 @@ class GlobalPlugin(BaseGlobalPlugin):
 		category=_("DictationBridge Lite"),
 	)
 	def script_toggleEcho(self, gesture):
-		self._enabled = not self._enabled
-		if not self._enabled:
-			self._cancelFlushTimer()
-			self._pendingStart = None
-			self._pendingText = ""
-			self._nativeDedupText = ""
-			self._nativeDeletedDedupText = ""
-			self._fallbackDedupText = ""
-			self._fallbackDeletedDedupText = ""
+		self._setEchoEnabled(not self._enabled)
 		ui.message(_("DictationBridge Lite echo on") if self._enabled else _("DictationBridge Lite echo off"))
 
 	def terminate(self):
 		self._cancelFlushTimer()
+		self._removeToolsMenu()
+		if self._speechFilterRegistered and self._speechFilter is not None:
+			try:
+				self._speechFilter.unregister(self._filterOnlineDuplicateSpeech)
+			except Exception:
+				log.exception("DictationBridge Lite: unable to unregister online speech filter")
+			self._speechFilter = None
+			self._speechFilterRegistered = False
 		if self._native is not None:
 			try:
 				self._native.DBL_Stop()

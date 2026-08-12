@@ -1,52 +1,105 @@
-# DictationBridge Lite 0.2.1 beta
+# DictationBridge Lite 0.3.0 beta
 
-DictationBridge Lite makes NVDA speak text entered through Windows voice typing. It is a focused continuation of DictationBridge's useful text-echo feature. Dragon support, legacy speech macros, and screen-reader voice commands are intentionally excluded. Legacy Windows Speech Recognition dictated-text and correction-panel feedback remain intended features.
+DictationBridge Lite makes NVDA speak text entered through Windows dictation. It supports two different Windows 10 recognition systems: online voice typing and legacy offline Windows Speech Recognition. The add-on does not perform speech recognition itself. It observes text after Windows inserts or replaces it.
 
-DictationBridge Lite is an independent modernization of the [original DictationBridge project](https://github.com/dictationbridge/dictationBridge). It is not an official release by, or an endorsement from, the original maintainers.
+This is an independent modernization of the [original DictationBridge project](https://github.com/dictationbridge/dictationBridge). It is not an official release by, or an endorsement from, the original maintainers. Dragon support, legacy speech macros, and screen-reader voice commands are intentionally excluded.
 
-## Using it
+## Choose a dictation system
 
-1. Install the add-on and restart NVDA.
+Online and offline dictation are useful for different reasons.
+
+### Online dictation
+
+- Start it in an editable field with Windows+H. See Microsoft's [voice typing instructions](https://support.microsoft.com/en-us/accessibility/windows/use-voice-typing-to-talk-instead-of-type-on-your-pc).
+- It generally provides better recognition without voice training.
+- It uses Microsoft's online speech-recognition service on Windows 10.
+- Windows may ask you to pause while it catches up.
+- DictationBridge Lite waits for Windows to finalize a phrase, then allows NVDA to announce that phrase once. This avoids the incomplete word fragments and repeated completed phrases heard in earlier versions, but it creates a noticeable delay.
+- Windows rotating tips and routine “Listening” or “Thinking” messages are suppressed. Genuine error messages remain available.
+- Correction facilities are more limited than legacy offline Speech Recognition.
+
+### Offline Windows Speech Recognition
+
+- It can dictate continuously with responsive NVDA feedback and does not require Microsoft's online recognition service.
+- Initial accuracy may be lower, but Windows provides microphone setup and voice-training tools that can improve it.
+- It supports spoken correction commands and a correction choices panel.
+- Dictated text itself is announced reliably in current Windows 10 testing.
+- Correction-panel speech is not dependable with NVDA 2026.1. Windows can display or reuse a correction panel without delivering an event that the add-on can read. Some panels or Windows feedback may be announced while another correction panel remains silent.
+
+## Open the Windows settings
+
+Open the NVDA menu, choose **Tools**, then **DictationBridge Lite**.
+
+- **Online dictation settings...** opens Windows Privacy > Speech, where online speech recognition can be enabled or disabled.
+- **Offline Speech Recognition settings...** opens the legacy Speech Recognition Control Panel for microphone setup, training, tutorials, and recognition controls.
+- **Speak dictated text** turns DictationBridge Lite announcements on or off. It does not start or stop either Windows recognizer.
+
+These menu items use the same Windows commands confirmed during Windows 10 testing:
+
+- Online settings: `ms-settings:privacy-speech`
+- Offline Speech Recognition Control Panel: `control /name Microsoft.SpeechRecognition`
+
+If necessary, either command can also be entered manually in the Windows Run dialog.
+
+## Start online dictation
+
+1. Make sure online speech recognition is enabled in Windows settings.
 2. Put the caret in an editable text field.
-3. Press Windows+H and begin dictating.
+3. Press Windows+H.
+4. Dictate a phrase, then pause long enough for Windows to finalize it.
 
-Dictated text is spoken after a short 100 millisecond pause. This deliberately allows partial phrases to be heard while you are still speaking. When Windows replaces or deletes text during a correction, DictationBridge Lite also reports the removed text and then speaks the replacement.
+DictationBridge Lite separates Windows' temporary composition text from text committed to the document. Temporary fragments and spoken command words are not announced. NVDA announces the completed phrase after Windows commits it, and an exact rapid duplicate is suppressed.
 
-Dictated text remains prioritized when Windows displays transient command or suggestion tooltips. Live testing confirmed that NVDA can speak both the tooltip and the following dictated text.
+## Set up and use offline Speech Recognition
 
-Legacy offline Windows Speech Recognition is also monitored. When its correction alternates or spelling panel appears, DictationBridge Lite automatically reads the visible prompt and choices.
+1. Open **NVDA menu > Tools > DictationBridge Lite > Offline Speech Recognition settings...**.
+2. Use **Set up microphone** before the first dictation session.
+3. Use **Train your computer to better understand you** if recognition accuracy needs improvement.
+4. Start Windows Speech Recognition from its Control Panel or another Windows-provided entry point.
+5. Put the caret in an editable field and begin dictating.
 
-**Known beta bug:** during online Windows+H dictation, NVDA can announce incomplete word fragments while Windows is updating the text and then announce the completed word or phrase. The final result is still spoken, but the preliminary fragments can be noisy.
-
-The add-on has no assigned global shortcut. In NVDA's Input Gestures dialog, look under **DictationBridge Lite** if you want to assign a gesture to **Toggle DictationBridge Lite text echo**.
+Microsoft's [Windows Speech Recognition instructions](https://support.microsoft.com/en-us/windows/use-voice-recognition-in-windows-83ff75bd-63eb-0b6c-18d4-6fae94050571) document Windows+Ctrl+S for opening Speech Recognition after setup, but live testing found that shortcut unreliable on one Windows 10 system: it could stop recognition while failing to start it again. The Speech Recognition Control Panel remains the dependable route to setup and other controls.
 
 ## Windows Speech Recognition training
 
-The Windows 10 Speech Recognition training wizard is supported. DictationBridge Lite automatically reads each new training passage and places it under the NVDA review cursor. Press the grave-accent key (usually immediately to the left of `1`) to read the current passage again while the training wizard is active.
+The Windows 10 Speech Recognition training wizard is supported. DictationBridge Lite automatically reads each new training passage and places it under the NVDA review cursor. Press the grave-accent key, usually immediately to the left of `1`, to read the current passage again while the training wizard is active.
+
+## Dictated-text feedback
+
+Offline insertions are combined for 100 milliseconds before they are spoken. This keeps feedback responsive while avoiding character-by-character speech. New lines, new paragraphs, deleted text, and replacement text are also reported.
+
+Online composition is handled differently. Temporary recognition changes are ignored, and the finalized phrase is left for NVDA to announce when Windows returns focus to the editor. This trades immediate fragments for cleaner phrase-level feedback.
+
+The add-on still has an assignable **Toggle DictationBridge Lite text echo** command. In NVDA's Input Gestures dialog, look under **DictationBridge Lite** to give it a shortcut.
+
+## Privacy and responsibility boundaries
+
+DictationBridge Lite does not receive microphone audio and does not make network connections. Online Windows+H dictation sends speech to Microsoft's service according to Windows privacy settings. Offline Windows Speech Recognition processes recognition locally.
+
+Recognition accuracy, punctuation, spoken commands, training data, and Windows' “hold on while we catch up” behavior belong to Windows. DictationBridge Lite reports the resulting text and selected Windows feedback through NVDA.
 
 ## Native and compatibility modes
 
-The complete build includes 32-bit and 64-bit native observers. It automatically uses the correct master library for the running NVDA version and observes both 32-bit and 64-bit applications.
+The complete build includes 32-bit and 64-bit native observers. It automatically uses the master library matching the running NVDA architecture and can observe both 32-bit and 64-bit applications.
 
-If the native files are absent or fail to start, the add-on enters Python-only compatibility mode. This mode can echo voice typing only in applications where NVDA produces synthetic typed-character events. It is intended for initial testing and does not provide dependable correction reporting.
+If the native files are absent or fail to start, the add-on enters Python-only compatibility mode. That mode works only in controls where NVDA exposes enough text events and does not provide dependable replacement reporting.
 
-## Supported targets
+## Supported and tested systems
 
-- Windows 10 22H2 and Windows 11
-- NVDA 2025.1 through the NVDA 2026 API series
-- Windows voice typing opened with Windows+H
-
-On Windows 10, Windows+H voice typing requires Microsoft's online speech-recognition service. DictationBridge Lite does not make network connections itself and does not receive microphone audio; it observes text after Windows inserts it. Punctuation, recognition accuracy, and spoken Windows commands are controlled by Windows rather than this add-on.
+- Live-tested: Windows 10 22H2 with NVDA 2026.1.1 AMD64 and Notepad.
+- Supported NVDA API range: NVDA 2025.1 through 2026.1.
+- Windows 11 and applications beyond Notepad remain part of the wider beta test matrix.
+- On Windows 11 22H2 and later, Microsoft replaced legacy Windows Speech Recognition with Voice Access. DictationBridge Lite's legacy offline support is primarily intended for Windows 10.
 
 ## Troubleshooting
 
-If no dictated text is spoken, restart NVDA with logging set to debug and look for lines beginning with `DictationBridge Lite`. Confirm that both loader programs and both in-process DLLs are present in the installed add-on directory.
+Start with Notepad. Confirm that normal keyboard typing is left alone and that dictated text appears before testing another application.
 
-For an initial test, use Notepad. Browser and office-document support should be tested after Notepad works because their editable controls use several different accessibility and text-input implementations.
+If no dictated text is spoken, restart NVDA with logging set to debug and look for lines beginning with `DictationBridge Lite`. Confirm that the installed add-on contains both loader programs, both master DLLs, and both in-process DLLs.
 
-Please note whether partial phrases are spoken, normal keyboard typing is left alone, deletions are announced, replacement text is spoken, and legacy WSR correction choices are read automatically. Those observations are the most useful results from an initial test.
+For online dictation, confirm that online speech recognition is enabled and allow Windows time to finalize the phrase. For offline dictation, confirm that Windows Speech Recognition is running and that microphone setup has been completed.
 
-The legacy offline Windows Speech Recognition training wizard is made accessible. Version 0.2.1 adds a focused editable-value-change fallback and restores alternates/spelling-panel speech. Live testing confirmed that offline dictated text and correction suggestions are now spoken. These are repairs to intended features, not intentional exclusions.
+If an offline correction panel is visible but silent, this is a known compatibility limitation. A useful report includes the Windows and NVDA versions, whether the first or a later correction failed, and relevant `DictationBridge Lite` or traceback lines from the NVDA log.
 
 ## Licensing and credit
 
