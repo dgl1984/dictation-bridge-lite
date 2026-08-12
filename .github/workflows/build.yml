@@ -16,9 +16,11 @@ jobs:
       - name: Check out source
         uses: actions/checkout@v7.0.1
 
-      - name: Validate Python syntax
+      - name: Validate Python sources and tests
         shell: pwsh
-        run: python -m compileall -q addon
+        run: |
+          python -c "import ast, pathlib; [ast.parse(path.read_text(encoding='utf-8-sig'), filename=str(path)) for path in pathlib.Path('addon').rglob('*.py')]"
+          python -B -m unittest discover -s tests -v
 
       - name: Build Win32 and x64 add-on
         shell: pwsh
