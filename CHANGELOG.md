@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.3.0 — 2026-08-12
+
+- Separated Windows+H temporary Composition text from the committed editor text so provisional word fragments and spoken command words are no longer echoed.
+- Left the finalized online phrase to NVDA and suppressed only an exact rapid duplicate during the short commit window.
+- Suppressed rotating online dictation tips and routine Listening or Thinking status changes while preserving genuine errors.
+- Removed the broad diagnostic event tracing used during development, restoring lightweight and responsive offline feedback.
+- Added **NVDA menu > Tools > DictationBridge Lite** with the two Windows 10 commands confirmed in live testing: `ms-settings:privacy-speech` for online recognition settings and `control /name Microsoft.SpeechRecognition` for the legacy offline Control Panel.
+- Added a checked **Speak dictated text** menu item synchronized with the existing assignable echo toggle.
+- Delayed legacy correction-panel reading until Windows has time to populate the choices and allowed normal NVDA event processing to continue.
+- Added speech for actionable legacy WSR feedback while silencing routine Listening, Off, and Sleeping changes.
+- Documented that ordinary offline dictation is responsive, online dictation is cleaner but delayed until phrase finalization, and legacy correction-panel events remain unreliable with NVDA 2026.1.
+- Expanded regression coverage for online composition, duplicate suppression, online hints, menu command targets, offline echo, and best-effort correction handling.
+- Kept all six native binaries and the native source unchanged.
+
 ## 0.2.1 — 2026-08-12
 
 - Delayed dictated-text speech until transient UI changes settle, preventing command and suggestion tooltips from suppressing the next echo.
